@@ -9,7 +9,7 @@ import urllib
 import hashlib
 import hmac
 import base64
-import utils
+import mws.utils
 import re
 try:
     from xml.etree.ElementTree import ParseError as XMLError
@@ -46,7 +46,6 @@ MARKETPLACES = {
     "UK" : "https://mws-eu.amazonservices.com", #A1F83G8C2ARO7P
     "JP" : "https://mws.amazonservices.jp", #A1VC38T7YXB528
     "CN" : "https://mws.amazonservices.com.cn", #AAHKV2X7AFYLW
-    "MX" : "https://mws.amazonservices.com.mx", #A1AM78C64UM0Y8    
 }
 
 
@@ -87,7 +86,7 @@ class DictWrapper(object):
     def __init__(self, xml, rootkey=None):
         self.original = xml
         self._rootkey = rootkey
-        self._mydict = utils.xml2dict().fromstring(remove_namespace(xml))
+        self._mydict = mws.utils.xml2dict().fromstring(remove_namespace(xml))
         self._response_dict = self._mydict.get(self._mydict.keys()[0],
                                                self._mydict)
 
@@ -142,11 +141,10 @@ class MWS(object):
     # Which is the name of the parameter for that specific account type.
     ACCOUNT_TYPE = "SellerId"
 
-    def __init__(self, access_key, secret_key, account_id, region='US', domain='', uri="", version="", auth_token=""):
+    def __init__(self, access_key, secret_key, account_id, region='US', domain='', uri="", version=""):
         self.access_key = access_key
         self.secret_key = secret_key
         self.account_id = account_id
-        self.auth_token = auth_token
         self.version = version or self.VERSION
         self.uri = uri or self.URI
 
@@ -177,12 +175,10 @@ class MWS(object):
             'Version': self.version,
             'SignatureMethod': 'HmacSHA256',
         }
-        if self.auth_token:
-            params['MWSAuthToken'] = self.auth_token
         params.update(extra_data)
-        request_description = '&'.join(['%s=%s' % (k, urllib.quote(params[k], safe='-_.~').encode('utf-8')) for k in sorted(params)])
+        request_description = '&'.join(['%s=%s' % (k, urllib.parse.quote(params[k], safe='-_.~').encode('utf-8')) for k in sorted(params)])
         signature = self.calc_signature(method, request_description)
-        url = '%s%s?%s&Signature=%s' % (self.domain, self.uri, request_description, urllib.quote(signature))
+        url = '%s%s?%s&Signature=%s' % (self.domain, self.uri, request_description, urllib.parse.quote(signature))
         headers = {'User-Agent': 'python-amazon-mws/0.0.1 (Language=Python)'}
         headers.update(kwargs.get('extra_headers', {}))
 
@@ -205,8 +201,8 @@ class MWS(object):
             except XMLError:
                 parsed_response = DataWrapper(data, response.headers)
 
-        except HTTPError, e:
-            error = MWSError(str(e.response.text))
+        except HTTPError as e:
+            error = MWSError(str(e))
             error.response = e.response
             raise error
 
@@ -226,7 +222,9 @@ class MWS(object):
         """Calculate MWS signature to interface with Amazon
         """
         sig_data = method + '\n' + self.domain.replace('https://', '').lower() + '\n' + self.uri + '\n' + request_description
-        return base64.b64encode(hmac.new(str(self.secret_key), sig_data, hashlib.sha256).digest())
+#         return base64.b64encode(hmac.new(str(self.secret_key), sig_data, hashlib.sha256).digest())
+#         zeKey = bytes(self.secret_key, encoding='utf-8')
+        return base64.b64encode(hmac.new(self.secret_key.encode('utf-8'), sig_data.encode('utf-8'), hashlib.sha256).digest())
 
     def get_timestamp(self):
         """
@@ -466,16 +464,15 @@ class Products(MWS):
         data.update(self.enumerate_param('ASINList.ASIN.', asins))
         return self.make_request(data)
 
-    def get_matching_product_for_id(self, marketplaceid, type, ids):
+    def get_matching_product_for_id(self, marketplaceid, type, id):
         """ Returns a list of products and their attributes, based on a list of
-            product identifier values (ASIN, SellerSKU, UPC, EAN, ISBN, GCID  and JAN)
-            The identifier type is case sensitive.
+            product identifier values (asin, sellersku, upc, ean, isbn and JAN)
             Added in Fourth Release, API version 2011-10-01
         """
         data = dict(Action='GetMatchingProductForId',
                     MarketplaceId=marketplaceid,
                     IdType=type)
-        data.update(self.enumerate_param('IdList.Id.', ids))
+        data.update(self.enumerate_param('IdList.Id', id))
         return self.make_request(data)
 
     def get_competitive_pricing_for_sku(self, marketplaceid, skus):
@@ -508,22 +505,6 @@ class Products(MWS):
                     ItemCondition=condition,
                     ExcludeMe=excludeme)
         data.update(self.enumerate_param('ASINList.ASIN.', asins))
-        return self.make_request(data)
-
-    def get_lowest_priced_offers_for_sku(self, marketplaceid, sku, condition="New", excludeme="False"):
-        data = dict(Action='GetLowestPricedOffersForSKU',
-                    MarketplaceId=marketplaceid,
-                    SellerSKU=sku,
-                    ItemCondition=condition,
-                    ExcludeMe=excludeme)
-        return self.make_request(data)
-
-    def get_lowest_priced_offers_for_asin(self, marketplaceid, asin, condition="New", excludeme="False"):
-        data = dict(Action='GetLowestPricedOffersForASIN',
-                    MarketplaceId=marketplaceid,
-                    ASIN=asin,
-                    ItemCondition=condition,
-                    ExcludeMe=excludeme)
         return self.make_request(data)
 
     def get_product_categories_for_sku(self, marketplaceid, sku):
